@@ -1,4 +1,4 @@
-# nnews - A Gnus Back End for Microsoft Exchange / Exchange Web Services (EWS)
+# nnews - An EMACS/Gnus Back End for Microsoft Exchange / Exchange Web Services (EWS)
 
 Ever dreamt of being able to read your emails stored on Microsoft Exchange Server in EMACS using Gnus Newsreader? 
 nnews makes it possible!
