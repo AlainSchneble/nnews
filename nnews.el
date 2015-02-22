@@ -31,6 +31,7 @@
 
 ;;; Code:
 
+(require 'nnheader)
 (require 'gnus-util)
 (require 'gnus)
 (require 'nnoo)
@@ -77,6 +78,7 @@ The effective URL is the concatenation of `nnews-protocol' \"://\" `nnews-hostna
   ;; 			     ))
   )
 
+(defvar nnews-status-string "")
 
 ;; Backend life cycle
 
@@ -114,9 +116,11 @@ The effective URL is the concatenation of `nnews-protocol' \"://\" `nnews-hostna
 (deffoo nnews-request-close ()
   t)
 
+;; A call to nnheader-report updates nnews-status-string:
+;; (nnheader-report 'nnews "[Error Message]") or
+;; (nnheader-report 'nnews "[Error Message %s %s]" formatParam1 formatParam2)
 (deffoo nnews-status-message (&optional server)
-  ;; ans/todo: implement status-message stack
-  "Ok")
+  nnews-status-string)
 
 
 ;; Group fetching
@@ -246,6 +250,29 @@ The effective URL is the concatenation of `nnews-protocol' \"://\" `nnews-hostna
 (deffoo nnews-request-post (&optional server)
   nil)
 
+;; Article mark management
+(deffoo nnews-request-set-mark (group action &optional server)
+  (dolist (actionEntry action)
+    (destructuring-bind (rangeSet action markSet) actionEntry
+      (when (memq 'read markSet)
+	(let* ((childFolders (plist-get nnews--mailbox-state-cache :Subfolders)))
+	  (do ((childFolder (car childFolders) (car childFolders))) ((equal group (plist-get childFolder :DisplayName)))
+	    (setq childFolders (cdr childFolders)))
+	  (let* ((childFolder (car childFolders))
+		 (itemIdMap (plist-get childFolder :ItemIdMap))
+		 (articleIds (gnus-uncompress-range rangeSet))
+		 (itemIdReadFlag (mapcar (lambda (articleId) (cons (cdr (assoc articleId itemIdMap)) (eq 'add action))) articleIds))
+		 (credentials (nnews--credentials-query server nnews-protocol nnews-username)))
+	    (nnews--update-item-read-flag-request itemIdReadFlag)
+	    )
+	  )
+	)
+      )
+    )
+  )
+(deffoo nnews-request-update-info (group info &optional server)
+  info
+  )
 
 ;; Private backend
 
@@ -517,6 +544,66 @@ The effective URL is the concatenation of `nnews-protocol' \"://\" `nnews-hostna
 	  (setq headersParsed (cons (cons (nnews--xml-get-node-attr header 'HeaderName) (elt header 2)) headersParsed))
 	  )
 	(setq messageList (cons `(:ItemId ,itemId :FromName ,fromName :FromAddress ,fromAddress :DateReceived ,date :Subject ,subject :BodyAsText ,body :BodyAsTextLineCount ,lines :BodyAsTextCharCount ,chars :Headers ,headersParsed) messageList))
+	)
+      (setq responseMessages (cdr responseMessages))
+      )
+    messageList
+    )
+  )
+
+
+;; UpdateItem request
+
+(defun nnews--update-item-read-flag-request (itemIdReadFlagAlist)
+  (let ((url-request-method "POST")
+	(url-request-extra-headers `(("Content-Type" . "text/xml")
+				     ("Authorization" . ,(nnews--credentials-http-basic-auth))))
+	(url-request-data
+	 (concat
+	  "<?xml version=\"1.0\" encoding=\"utf-8\"?>
+<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:m=\"http://schemas.microsoft.com/exchange/services/2006/messages\" xmlns:t=\"http://schemas.microsoft.com/exchange/services/2006/types\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">
+  <soap:Header>
+    <t:RequestServerVersion Version=\"Exchange2013\" />
+  </soap:Header>
+  <soap:Body>
+    <m:UpdateItem MessageDisposition=\"SaveOnly\" ConflictResolution=\"AutoResolve\">
+      <m:ItemChanges>"
+	  (mapconcat (lambda (itemIdReadFlag) (format "
+        <t:ItemChange>
+          <t:ItemId Id=\" %s \" />
+          <t:Updates>
+            <t:SetItemField>
+              <t:FieldURI FieldURI=\"message:IsRead\" />
+              <t:Message>
+                <t:IsRead>%s</t:IsRead>
+              </t:Message>
+            </t:SetItemField>
+          </t:Updates>
+        </t:ItemChange>
+" (car itemIdReadFlag) (if (cdr itemIdReadFlag) "true" "false"))) itemIdReadFlagAlist "")
+"
+      </m:ItemChanges>
+    </m:UpdateItem>
+  </soap:Body>
+</soap:Envelope>"
+	 ))
+	)
+    (with-current-buffer (url-retrieve-synchronously (nnews--ewsurl))
+      ;;(switch-to-buffer (current-buffer)))
+      (nnews--update-item-request-parser (libxml-parse-xml-region (point) (point-max))))
+    )
+  )
+
+(defun nnews--update-item-request-parser (response)
+  (let ((responseMessages
+	 (nthcdr 2 (nnews--xml-get-node '(Body UpdateItemResponse ResponseMessages) response)))
+	messageList)
+    (while responseMessages
+      (let* ((responseMessage (car responseMessages))
+	     (messageNode (nnews--xml-get-node '(Items Message) responseMessage))
+	     (itemId (nnews--xml-get-node-attr (nnews--xml-get-node '(ItemId) messageNode) 'Id))
+	     )
+	;(setq messageList (cons `(:ItemId ,itemId :FromName ,fromName :FromAddress ,fromAddress :DateReceived ,date :Subject ,subject :BodyAsText ,body :BodyAsTextLineCount ,lines :BodyAsTextCharCount ,chars :Headers ,headersParsed) messageList))
 	)
       (setq responseMessages (cdr responseMessages))
       )
