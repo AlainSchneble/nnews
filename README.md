@@ -1,7 +1,7 @@
 # nnews
 A Gnus Back End for Microsoft Exchange / Exchange Web Services (EWS)
 
-Ever dreamt of being able to read your emails stored on Microsoft Exchange Server in EMACS unsing Gnus Newsreader? 
+Ever dreamt of being able to read your emails stored on Microsoft Exchange Server in EMACS using Gnus Newsreader? 
 nnews makes it possible!
 
 ## Features
@@ -19,4 +19,4 @@ nnews makes it possible!
 
 ## Project Status
 * Current version is still alpha and does not work without any inside knowledge.
-* nnews is under development right now and expect a first usable version with the above listed features by 8th of March 2015 latest incl. documentation.
+* nnews is under active development right now. Expect a first usable version with the above listed features by 8th of March 2015 latest incl. documentation on how to set up/connect to an Exchange mailbox.
