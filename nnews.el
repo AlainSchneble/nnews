@@ -271,7 +271,19 @@ The effective URL is the concatenation of `nnews-protocol' \"://\" `nnews-hostna
     )
   )
 (deffoo nnews-request-update-info (group info &optional server)
-  info
+  (let* ((childFolders (plist-get nnews--mailbox-state-cache :Subfolders)))
+    (do ((childFolder (car childFolders) (car childFolders))) ((equal group (plist-get childFolder :DisplayName)))
+      (setq childFolders (cdr childFolders)))
+    (let* ((childFolder (car childFolders))
+	   (itemIdMap (plist-get childFolder :ItemIdMap))
+	   (credentials (nnews--credentials-query server nnews-protocol nnews-username))
+	   (syncState)
+	   (messages (nnews--sync-item-hierarchy-read-mark-request (plist-get childFolder :FolderId) syncState))
+	   (gnusReadArticles (remove nil (mapcar (lambda (m) (if (plist-get m :IsRead) (car (rassoc (plist-get m :ItemId) itemIdMap)) nil)) (plist-get messages :ChildItems)))))
+      ;;(gnus-info-set-read info (gnus-add-to-range (gnus-info-read info) (sort gnusReadArticles #'<)))
+      (gnus-info-set-read info (gnus-range-normalize (sort gnusReadArticles #'<)))
+	)
+      )
   )
 
 ;; Private backend
@@ -551,6 +563,62 @@ The effective URL is the concatenation of `nnews-protocol' \"://\" `nnews-hostna
     )
   )
 
+
+;; SyncFolderItem request
+
+(defun nnews--sync-item-hierarchy-read-mark-request (folderId syncState)
+  (let ((url-request-method "POST")
+	(url-request-extra-headers `(("Content-Type" . "text/xml")
+				     ("Authorization" . ,(nnews--credentials-http-basic-auth))))
+	(url-request-data
+	 (concat
+	  "<?xml version=\"1.0\" encoding=\"utf-8\"?>
+<soap:Envelope xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:m=\"http://schemas.microsoft.com/exchange/services/2006/messages\" xmlns:t=\"http://schemas.microsoft.com/exchange/services/2006/types\" xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\">
+  <soap:Header>
+    <t:RequestServerVersion Version=\"Exchange2013\" />
+  </soap:Header>
+  <soap:Body>
+    <m:SyncFolderItems>
+      <m:ItemShape>
+        <t:BaseShape>IdOnly</t:BaseShape>
+        <t:AdditionalProperties>
+          <t:FieldURI FieldURI=\"message:IsRead\" />
+        </t:AdditionalProperties>
+      </m:ItemShape>
+      <m:SyncFolderId>
+        <t:FolderId Id=\""
+	  folderId
+	  "\" />
+      </m:SyncFolderId>
+      <m:MaxChangesReturned>512</m:MaxChangesReturned>
+      <m:SyncScope>NormalItems</m:SyncScope>
+    </m:SyncFolderItems>
+  </soap:Body>
+</soap:Envelope>"
+	  )
+	 )
+	)
+    (with-current-buffer (url-retrieve-synchronously (nnews--ewsurl))
+      ;(switch-to-buffer (current-buffer))
+      (nnews-sync-item-hierarchy-read-mark-request-parser (libxml-parse-xml-region (point) (point-max))))
+    )
+  )
+
+(defun nnews-sync-item-hierarchy-read-mark-request-parser (response)
+  (pcase response
+    (`(Envelope ,_ ,_ (Body ,_ (SyncFolderItemsResponse ,_ (ResponseMessages ,_ (SyncFolderItemsResponseMessage ,_ ,_ ,syncState ,_ ,changes)))))
+     (let ((changeNodes (nthcdr 2 changes))
+	   changeList)
+       (while changeNodes
+     	 (pcase (car changeNodes)
+     	   (`(,change ,_ (Message ,_ ,itemId, isRead))
+	    (setq changeList (cons (list :ItemId (cdr (assoc 'Id (nth 1 itemId))) :Change change :IsRead (equalp "true" (nth 2 isRead))) changeList)))
+     	   )
+     	 (setq changeNodes (cdr changeNodes))
+     	 )
+       `(:ItemsSyncState ,(nth 2 syncState) :ChildItems ,changeList)))
+    (_ 'error))
+  )
 
 ;; UpdateItem request
 
